@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { Sparkles, Settings, LogOut } from 'lucide-react';
 import { useStore } from '../store';
 

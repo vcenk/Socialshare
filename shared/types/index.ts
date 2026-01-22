@@ -95,7 +95,10 @@ export type MessageType =
   | 'CREDITS_RESULT'
   | 'AUTH_STATUS'
   | 'LOGIN'
-  | 'LOGOUT';
+  | 'SIGNUP'
+  | 'LOGOUT'
+  | 'SAVE_DRAFT'
+  | 'GET_DRAFTS';
 
 export interface ExtensionMessage<T = unknown> {
   type: MessageType;

@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { clsx } from 'clsx';
 import type { ToneType } from '@shared/types';
 

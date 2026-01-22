@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Copy, Check, RefreshCw, Send } from 'lucide-react';
 import { getPlatformConfig } from '../config/platforms';
 import type { Platform } from '@shared/types';

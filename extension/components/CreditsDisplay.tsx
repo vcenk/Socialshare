@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { Zap, Image, Video } from 'lucide-react';
 import type { UserCredits } from '@shared/types';
 

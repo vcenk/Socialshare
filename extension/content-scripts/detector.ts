@@ -1,4 +1,7 @@
-import type { PageContext, ProductContext, ArticleContext, VideoContext, ContextType } from '@shared/types';
+import type { PageContext, ProductContext, ArticleContext, VideoContext } from '@shared/types';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type JsonLdData = Record<string, any>;
 
 // Listen for messages from popup/background - only from our extension
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -43,18 +46,20 @@ function detectProductPage(): ProductContext | null {
   // Check for JSON-LD structured data
   const jsonLd = getJsonLd('Product');
   if (jsonLd) {
+    const offers = jsonLd.offers;
+    const offersArray = Array.isArray(offers) ? offers : [offers];
     return {
       type: 'product',
       url: window.location.href,
-      title: jsonLd.name || document.title,
-      description: jsonLd.description,
+      title: String(jsonLd.name || document.title),
+      description: jsonLd.description ? String(jsonLd.description) : undefined,
       images: extractImages(jsonLd.image),
       metadata: {},
-      price: jsonLd.offers?.price || jsonLd.offers?.[0]?.price,
-      currency: jsonLd.offers?.priceCurrency || jsonLd.offers?.[0]?.priceCurrency,
-      brand: jsonLd.brand?.name || jsonLd.brand,
-      rating: jsonLd.aggregateRating?.ratingValue,
-      reviewCount: jsonLd.aggregateRating?.reviewCount,
+      price: offers?.price ? String(offers.price) : offersArray[0]?.price ? String(offersArray[0].price) : undefined,
+      currency: offers?.priceCurrency ? String(offers.priceCurrency) : offersArray[0]?.priceCurrency ? String(offersArray[0].priceCurrency) : undefined,
+      brand: jsonLd.brand?.name ? String(jsonLd.brand.name) : typeof jsonLd.brand === 'string' ? jsonLd.brand : undefined,
+      rating: jsonLd.aggregateRating?.ratingValue ? Number(jsonLd.aggregateRating.ratingValue) : undefined,
+      reviewCount: jsonLd.aggregateRating?.reviewCount ? Number(jsonLd.aggregateRating.reviewCount) : undefined,
     };
   }
 
@@ -154,15 +159,16 @@ function detectArticle(): ArticleContext | null {
   // Check for article schema
   const jsonLd = getJsonLd('Article') || getJsonLd('NewsArticle') || getJsonLd('BlogPosting');
   if (jsonLd) {
+    const authorArray = Array.isArray(jsonLd.author) ? jsonLd.author : [jsonLd.author];
     return {
       type: 'article',
       url: window.location.href,
-      title: jsonLd.headline || document.title,
-      description: jsonLd.description,
+      title: String(jsonLd.headline || document.title),
+      description: jsonLd.description ? String(jsonLd.description) : undefined,
       images: extractImages(jsonLd.image),
       metadata: {},
-      author: jsonLd.author?.name || jsonLd.author?.[0]?.name,
-      publishedDate: jsonLd.datePublished,
+      author: jsonLd.author?.name ? String(jsonLd.author.name) : authorArray[0]?.name ? String(authorArray[0].name) : undefined,
+      publishedDate: jsonLd.datePublished ? String(jsonLd.datePublished) : undefined,
       content: getArticleContent(),
     };
   }
@@ -221,7 +227,7 @@ function detectGeneralPage(): PageContext {
 }
 
 // Helper functions
-function getJsonLd(type: string): Record<string, unknown> | null {
+function getJsonLd(type: string): JsonLdData | null {
   const scripts = document.querySelectorAll('script[type="application/ld+json"]');
 
   for (const script of scripts) {
@@ -283,14 +289,15 @@ function getImages(): string[] {
   // First significant image on page
   const pageImages = document.querySelectorAll('img[src]');
   for (const img of pageImages) {
-    const src = img.getAttribute('src');
+    const imgEl = img as HTMLImageElement;
+    const src = imgEl.getAttribute('src');
     if (
       src &&
       !src.includes('logo') &&
       !src.includes('icon') &&
       !src.includes('avatar') &&
-      img.width > 200 &&
-      img.height > 200 &&
+      imgEl.width > 200 &&
+      imgEl.height > 200 &&
       !images.includes(src)
     ) {
       images.push(src.startsWith('//') ? `https:${src}` : src);
@@ -408,23 +415,24 @@ function sanitizeContext(context: PageContext): PageContext {
   };
 
   // Sanitize type-specific fields
-  if ('content' in context && context.content) {
-    (sanitized as ArticleContext).content = sanitizeString(context.content);
+  const ctx = context as unknown as Record<string, unknown>;
+  if ('content' in ctx && typeof ctx.content === 'string') {
+    (sanitized as ArticleContext).content = sanitizeString(ctx.content);
   }
-  if ('author' in context && context.author) {
-    (sanitized as ArticleContext).author = sanitizeString(context.author);
+  if ('author' in ctx && typeof ctx.author === 'string') {
+    (sanitized as ArticleContext).author = sanitizeString(ctx.author);
   }
-  if ('brand' in context && context.brand) {
-    (sanitized as ProductContext).brand = sanitizeString(context.brand);
+  if ('brand' in ctx && typeof ctx.brand === 'string') {
+    (sanitized as ProductContext).brand = sanitizeString(ctx.brand);
   }
-  if ('channel' in context && context.channel) {
-    (sanitized as VideoContext).channel = sanitizeString(context.channel);
+  if ('channel' in ctx && typeof ctx.channel === 'string') {
+    (sanitized as VideoContext).channel = sanitizeString(ctx.channel);
   }
-  if ('price' in context && context.price) {
-    (sanitized as ProductContext).price = sanitizeString(context.price);
+  if ('price' in ctx && typeof ctx.price === 'string') {
+    (sanitized as ProductContext).price = sanitizeString(ctx.price);
   }
-  if ('publishedDate' in context && context.publishedDate) {
-    (sanitized as ArticleContext).publishedDate = sanitizeString(context.publishedDate);
+  if ('publishedDate' in ctx && typeof ctx.publishedDate === 'string') {
+    (sanitized as ArticleContext).publishedDate = sanitizeString(ctx.publishedDate);
   }
   if ('rating' in context) {
     const rating = Number((context as ProductContext).rating);
