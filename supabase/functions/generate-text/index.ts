@@ -1,10 +1,21 @@
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+// CORS: In production, restrict to your extension ID
+// chrome-extension://YOUR_EXTENSION_ID
+const ALLOWED_ORIGINS = Deno.env.get('ALLOWED_ORIGINS')?.split(',') || ['*'];
+
+function getCorsHeaders(origin: string | null): Record<string, string> {
+  const allowedOrigin = ALLOWED_ORIGINS.includes('*')
+    ? '*'
+    : (origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0]);
+
+  return {
+    'Access-Control-Allow-Origin': allowedOrigin,
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  };
+}
 
 interface GenerateRequest {
   context: {
@@ -23,6 +34,14 @@ interface GenerateRequest {
   includeEmoji: boolean;
 }
 
+// Validation constants
+const VALID_PLATFORMS = ['linkedin', 'twitter', 'facebook', 'instagram', 'tiktok'];
+const VALID_TONES = ['professional', 'casual', 'humorous', 'promotional', 'educational'];
+const VALID_CONTEXT_TYPES = ['product', 'article', 'video', 'general'];
+const MAX_TITLE_LENGTH = 500;
+const MAX_DESCRIPTION_LENGTH = 2000;
+const MAX_URL_LENGTH = 2000;
+
 const PLATFORM_LIMITS: Record<string, number> = {
   linkedin: 3000,
   twitter: 280,
@@ -32,8 +51,19 @@ const PLATFORM_LIMITS: Record<string, number> = {
 };
 
 serve(async (req) => {
+  const origin = req.headers.get('Origin');
+  const corsHeaders = getCorsHeaders(origin);
+
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
+  }
+
+  // Only allow POST
+  if (req.method !== 'POST') {
+    return new Response(
+      JSON.stringify({ error: 'Method not allowed' }),
+      { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
   }
 
   try {
@@ -75,8 +105,26 @@ serve(async (req) => {
       );
     }
 
-    // Parse request
-    const body: GenerateRequest = await req.json();
+    // Parse and validate request
+    let body: GenerateRequest;
+    try {
+      body = await req.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ error: 'Invalid JSON body' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Validate request body
+    const validationError = validateRequest(body);
+    if (validationError) {
+      return new Response(
+        JSON.stringify({ error: validationError }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const { context, platform, tone, includeHashtags, includeEmoji } = body;
 
     // Build prompt
@@ -172,6 +220,102 @@ Rules:
 - Write ready-to-post content only, no explanations`;
 }
 
+/**
+ * Validate the incoming request body
+ */
+function validateRequest(body: unknown): string | null {
+  if (!body || typeof body !== 'object') {
+    return 'Invalid request body';
+  }
+
+  const req = body as Record<string, unknown>;
+
+  // Validate platform
+  if (!req.platform || !VALID_PLATFORMS.includes(req.platform as string)) {
+    return 'Invalid platform';
+  }
+
+  // Validate tone
+  if (!req.tone || !VALID_TONES.includes(req.tone as string)) {
+    return 'Invalid tone';
+  }
+
+  // Validate context
+  if (!req.context || typeof req.context !== 'object') {
+    return 'Invalid context';
+  }
+
+  const ctx = req.context as Record<string, unknown>;
+
+  // Validate context type
+  if (!ctx.type || !VALID_CONTEXT_TYPES.includes(ctx.type as string)) {
+    return 'Invalid context type';
+  }
+
+  // Validate URL
+  if (!ctx.url || typeof ctx.url !== 'string') {
+    return 'Invalid URL';
+  }
+  try {
+    const url = new URL(ctx.url as string);
+    if (!['http:', 'https:'].includes(url.protocol)) {
+      return 'Invalid URL protocol';
+    }
+  } catch {
+    return 'Invalid URL format';
+  }
+  if ((ctx.url as string).length > MAX_URL_LENGTH) {
+    return 'URL too long';
+  }
+
+  // Validate title
+  if (!ctx.title || typeof ctx.title !== 'string') {
+    return 'Invalid title';
+  }
+  if ((ctx.title as string).length > MAX_TITLE_LENGTH) {
+    return 'Title too long';
+  }
+
+  // Validate optional fields
+  if (ctx.description && (typeof ctx.description !== 'string' || (ctx.description as string).length > MAX_DESCRIPTION_LENGTH)) {
+    return 'Invalid description';
+  }
+
+  // Validate boolean fields
+  if (typeof req.includeHashtags !== 'boolean' || typeof req.includeEmoji !== 'boolean') {
+    return 'Invalid options';
+  }
+
+  return null;
+}
+
+/**
+ * Sanitize user input to prevent prompt injection.
+ * Removes patterns that could be used to manipulate the AI.
+ */
+function sanitizeForPrompt(text: string | undefined, maxLength: number): string {
+  if (!text) return '';
+
+  let sanitized = text
+    // Remove potential instruction injections
+    .replace(/\b(ignore|disregard|forget|override|system|instruction|prompt|assistant|user|human)\b.*?(above|previous|all|everything)/gi, '[removed]')
+    // Remove markdown-like formatting that could confuse the model
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/---+/g, '')
+    // Remove URLs with javascript: or data: schemes
+    .replace(/(?:javascript|data|vbscript):/gi, '')
+    // Normalize whitespace
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Truncate to max length
+  if (sanitized.length > maxLength) {
+    sanitized = sanitized.substring(0, maxLength) + '...';
+  }
+
+  return sanitized;
+}
+
 function buildPrompt(
   context: GenerateRequest['context'],
   platform: string,
@@ -179,38 +323,61 @@ function buildPrompt(
   includeHashtags: boolean,
   includeEmoji: boolean
 ): string {
-  let prompt = `Create a ${platform} post about this ${context.type}:\n\n`;
-  prompt += `Title: ${context.title}\n`;
+  // Sanitize all user-provided content
+  const safeTitle = sanitizeForPrompt(context.title, MAX_TITLE_LENGTH);
+  const safeDescription = sanitizeForPrompt(context.description, MAX_DESCRIPTION_LENGTH);
+  const safePrice = sanitizeForPrompt(context.price, 50);
+  const safeBrand = sanitizeForPrompt(context.brand, 100);
+  const safeAuthor = sanitizeForPrompt(context.author, 100);
+  const safeChannel = sanitizeForPrompt(context.channel, 100);
 
-  if (context.description) {
-    prompt += `Description: ${context.description.substring(0, 500)}\n`;
+  // Validate URL (already validated, but sanitize anyway)
+  let safeUrl = '';
+  try {
+    const url = new URL(context.url);
+    if (['http:', 'https:'].includes(url.protocol)) {
+      safeUrl = url.href;
+    }
+  } catch {
+    safeUrl = '[invalid url]';
   }
 
-  if (context.price) {
-    prompt += `Price: ${context.price}\n`;
+  // Build prompt with clear structure
+  let prompt = `Generate a ${platform} post for the following content:\n\n`;
+  prompt += `CONTENT TYPE: ${context.type}\n`;
+  prompt += `TITLE: ${safeTitle}\n`;
+
+  if (safeDescription) {
+    prompt += `DESCRIPTION: ${safeDescription}\n`;
   }
 
-  if (context.brand) {
-    prompt += `Brand: ${context.brand}\n`;
+  if (safePrice) {
+    prompt += `PRICE: ${safePrice}\n`;
   }
 
-  if (context.author) {
-    prompt += `Author: ${context.author}\n`;
+  if (safeBrand) {
+    prompt += `BRAND: ${safeBrand}\n`;
   }
 
-  if (context.channel) {
-    prompt += `Channel: ${context.channel}\n`;
+  if (safeAuthor) {
+    prompt += `AUTHOR: ${safeAuthor}\n`;
   }
 
-  prompt += `\nURL: ${context.url}\n`;
-  prompt += `\nTone: ${tone}`;
-  prompt += includeHashtags ? '\nInclude 3-5 relevant hashtags.' : '\nDo not include hashtags.';
-  prompt += includeEmoji ? '\nInclude appropriate emojis.' : '\nMinimize emoji usage.';
+  if (safeChannel) {
+    prompt += `CHANNEL: ${safeChannel}\n`;
+  }
+
+  prompt += `LINK: ${safeUrl}\n`;
+  prompt += `\nREQUIREMENTS:\n`;
+  prompt += `- Tone: ${tone}\n`;
+  prompt += includeHashtags ? '- Include 3-5 relevant hashtags\n' : '- Do not include hashtags\n';
+  prompt += includeEmoji ? '- Include appropriate emojis\n' : '- Minimize emoji usage\n';
+  prompt += '\nGenerate the post now:';
 
   return prompt;
 }
 
 function extractHashtags(content: string): string[] {
   const matches = content.match(/#[\w]+/g);
-  return matches ? [...new Set(matches)] : [];
+  return matches ? [...new Set(matches)].slice(0, 10) : []; // Limit to 10 hashtags
 }

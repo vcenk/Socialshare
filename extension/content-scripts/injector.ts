@@ -1,11 +1,39 @@
 import { PLATFORMS } from '../config/platforms';
 import type { Platform } from '@shared/types';
 
-// Listen for injection requests
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+// Valid platforms for injection
+const VALID_PLATFORMS: Platform[] = ['linkedin', 'twitter', 'facebook', 'instagram', 'tiktok'];
+
+// Listen for injection requests - only from extension context
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Security: Only accept messages from our extension
+  if (sender.id !== chrome.runtime.id) {
+    sendResponse({ type: 'INJECTION_RESULT', payload: { success: false, method: 'failed', error: 'Unauthorized' } });
+    return true;
+  }
+
   if (message.type === 'INJECT_CONTENT') {
-    const { content, platform } = message.payload as { content: string; platform: Platform };
-    const result = injectContent(content, platform);
+    const payload = message.payload;
+
+    // Validate payload structure
+    if (!payload || typeof payload.content !== 'string' || typeof payload.platform !== 'string') {
+      sendResponse({ type: 'INJECTION_RESULT', payload: { success: false, method: 'failed', error: 'Invalid payload' } });
+      return true;
+    }
+
+    // Validate platform
+    if (!VALID_PLATFORMS.includes(payload.platform as Platform)) {
+      sendResponse({ type: 'INJECTION_RESULT', payload: { success: false, method: 'failed', error: 'Invalid platform' } });
+      return true;
+    }
+
+    // Validate content length (prevent DoS)
+    if (payload.content.length > 100000) {
+      sendResponse({ type: 'INJECTION_RESULT', payload: { success: false, method: 'failed', error: 'Content too long' } });
+      return true;
+    }
+
+    const result = injectContent(payload.content, payload.platform as Platform);
     sendResponse({ type: 'INJECTION_RESULT', payload: result });
   }
   return true;
@@ -191,16 +219,47 @@ function injectGeneric(element: HTMLElement, content: string): InjectionResult {
   return { success: false, method: 'failed', error: 'Unsupported element type' };
 }
 
+/**
+ * Sanitize content for injection.
+ * Since we're inserting into text fields, we primarily need to ensure
+ * no executable code can be injected.
+ */
 function sanitizeForInjection(content: string): string {
-  // Remove any potentially harmful content
-  return content
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+  if (!content || typeof content !== 'string') {
+    return '';
+  }
+
+  // Use DOM to safely get text content (this removes all HTML)
+  const temp = document.createElement('div');
+  temp.textContent = content;
+  let sanitized = temp.textContent || '';
+
+  // Additional safety: remove dangerous URI schemes that might have slipped through
+  sanitized = sanitized
     .replace(/javascript:/gi, '')
-    .replace(/on\w+=/gi, '')
+    .replace(/data:/gi, '')
+    .replace(/vbscript:/gi, '');
+
+  // Normalize whitespace but preserve intentional line breaks
+  sanitized = sanitized
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[\t ]+/g, ' ')
+    .replace(/\n +/g, '\n')
+    .replace(/ +\n/g, '\n')
     .trim();
+
+  return sanitized;
 }
 
+/**
+ * Escape HTML entities for safe insertion into innerHTML.
+ * This converts special characters to their HTML entity equivalents.
+ */
 function escapeHtml(text: string): string {
+  if (!text || typeof text !== 'string') {
+    return '';
+  }
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;

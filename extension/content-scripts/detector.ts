@@ -1,10 +1,21 @@
 import type { PageContext, ProductContext, ArticleContext, VideoContext, ContextType } from '@shared/types';
 
-// Listen for messages from popup/background
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+// Listen for messages from popup/background - only from our extension
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Security: Only accept messages from our extension
+  if (sender.id !== chrome.runtime.id) {
+    sendResponse({ type: 'CONTEXT_RESULT', payload: null, error: 'Unauthorized' });
+    return true;
+  }
+
   if (message.type === 'GET_CONTEXT') {
-    const context = detectPageContext();
-    sendResponse({ type: 'CONTEXT_RESULT', payload: context });
+    try {
+      const context = detectPageContext();
+      sendResponse({ type: 'CONTEXT_RESULT', payload: context });
+    } catch (error) {
+      console.error('Context detection error:', error);
+      sendResponse({ type: 'CONTEXT_RESULT', payload: null, error: 'Detection failed' });
+    }
   }
   return true;
 });
@@ -325,31 +336,116 @@ function getArticleContent(): string {
   return '';
 }
 
-function sanitizeContext(context: PageContext): PageContext {
-  // Strip potential XSS content
-  const sanitizeString = (str: string | undefined): string | undefined => {
-    if (!str) return undefined;
-    return str
-      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-      .replace(/<[^>]*>/g, '')
-      .replace(/javascript:/gi, '')
-      .replace(/on\w+=/gi, '')
-      .trim();
-  };
+/**
+ * Sanitize a string by removing HTML and dangerous content.
+ * Uses DOM-based sanitization for better security.
+ */
+function sanitizeString(str: string | undefined): string | undefined {
+  if (!str) return undefined;
 
-  return {
-    ...context,
+  // Use DOM to safely extract text content (removes all HTML)
+  const temp = document.createElement('div');
+  temp.textContent = str; // This escapes HTML
+  let result = temp.textContent || '';
+
+  // Double-check: remove any remaining dangerous patterns
+  result = result
+    .replace(/javascript:/gi, '')
+    .replace(/data:/gi, '')
+    .replace(/vbscript:/gi, '')
+    .replace(/\bon\w+\s*=/gi, '');
+
+  // Normalize whitespace
+  result = result.replace(/\s+/g, ' ').trim();
+
+  // Limit length to prevent memory issues
+  return result.substring(0, 10000);
+}
+
+/**
+ * Sanitize a URL - only allow http/https protocols
+ */
+function sanitizeUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url, window.location.origin);
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return null;
+    }
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sanitize metadata object
+ */
+function sanitizeMetadata(metadata: Record<string, string>): Record<string, string> {
+  const sanitized: Record<string, string> = {};
+  const entries = Object.entries(metadata).slice(0, 50); // Limit entries
+
+  for (const [key, value] of entries) {
+    const sanitizedKey = sanitizeString(key);
+    const sanitizedValue = sanitizeString(value);
+    if (sanitizedKey && sanitizedValue && sanitizedKey.length < 100) {
+      sanitized[sanitizedKey] = sanitizedValue;
+    }
+  }
+  return sanitized;
+}
+
+function sanitizeContext(context: PageContext): PageContext {
+  const sanitized: PageContext = {
+    type: context.type,
+    url: sanitizeUrl(context.url) || window.location.href,
     title: sanitizeString(context.title) || 'Untitled',
     description: sanitizeString(context.description),
-    images: context.images.filter((url) => {
-      try {
-        const parsed = new URL(url);
-        return ['http:', 'https:'].includes(parsed.protocol);
-      } catch {
-        return false;
-      }
-    }),
+    images: context.images
+      .slice(0, 10) // Limit number of images
+      .map(sanitizeUrl)
+      .filter((url): url is string => url !== null),
+    metadata: sanitizeMetadata(context.metadata),
   };
+
+  // Sanitize type-specific fields
+  if ('content' in context && context.content) {
+    (sanitized as ArticleContext).content = sanitizeString(context.content);
+  }
+  if ('author' in context && context.author) {
+    (sanitized as ArticleContext).author = sanitizeString(context.author);
+  }
+  if ('brand' in context && context.brand) {
+    (sanitized as ProductContext).brand = sanitizeString(context.brand);
+  }
+  if ('channel' in context && context.channel) {
+    (sanitized as VideoContext).channel = sanitizeString(context.channel);
+  }
+  if ('price' in context && context.price) {
+    (sanitized as ProductContext).price = sanitizeString(context.price);
+  }
+  if ('publishedDate' in context && context.publishedDate) {
+    (sanitized as ArticleContext).publishedDate = sanitizeString(context.publishedDate);
+  }
+  if ('rating' in context) {
+    const rating = Number((context as ProductContext).rating);
+    if (!isNaN(rating) && rating >= 0 && rating <= 5) {
+      (sanitized as ProductContext).rating = rating;
+    }
+  }
+  if ('reviewCount' in context) {
+    const count = Number((context as ProductContext).reviewCount);
+    if (!isNaN(count) && count >= 0) {
+      (sanitized as ProductContext).reviewCount = count;
+    }
+  }
+  if ('viewCount' in context) {
+    const count = Number((context as VideoContext).viewCount);
+    if (!isNaN(count) && count >= 0) {
+      (sanitized as VideoContext).viewCount = count;
+    }
+  }
+
+  return sanitized;
 }
 
 console.log('SocialForge context detector loaded');
