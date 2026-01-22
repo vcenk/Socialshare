@@ -11,9 +11,9 @@ SocialForge is a Chrome extension that automatically detects webpage context (pr
 | Component | Technology |
 |-----------|------------|
 | Extension | Chrome Manifest V3, React, TypeScript, Tailwind CSS |
-| Backend API | Supabase Edge Functions (Deno) |
-| Authentication | Supabase Auth (JWT) |
-| Database | Supabase PostgreSQL with RLS |
+| Backend API | Firebase Cloud Functions (Node.js) |
+| Authentication | Firebase Auth |
+| Database | Cloud Firestore (NoSQL) |
 | AI - Text | OpenAI GPT-4o / Claude API |
 | AI - Images | FAL AI (FLUX) |
 | AI - Video | FAL AI / Runway API |
@@ -54,16 +54,15 @@ SocialForge is a Chrome extension that automatically detects webpage context (pr
     globals.css         → Tailwind CSS with custom components
   manifest.json         → Chrome extension manifest (V3)
 
-/supabase
+/firebase
+  firebase.json         → Firebase project configuration
+  firestore.rules       → Firestore security rules
+  firestore.indexes.json→ Firestore indexes
   /functions
-    /credits-check      → GET user credits
-    /generate-text      → POST generate content with OpenAI
-    /drafts-save        → POST save draft
-    /drafts-list        → GET list user drafts
-    /stripe-webhook     → POST handle Stripe events
-  /migrations
-    20240101000000_initial_schema.sql → Database schema with RLS
-  config.toml           → Supabase local development config
+    /src
+      index.ts          → All Cloud Functions (creditsCheck, generateText, etc.)
+    package.json        → Functions dependencies
+    tsconfig.json       → TypeScript config for functions
 
 /shared
   /types
@@ -73,9 +72,10 @@ SocialForge is a Chrome extension that automatically detects webpage context (pr
 ## Quick Setup
 
 1. **Install dependencies**: `npm install`
-2. **Configure Supabase**: Edit `extension/background/service-worker.ts` with your Supabase URL and anon key
-3. **Build**: `npm run build`
-4. **Load in Chrome**: Go to `chrome://extensions`, enable Developer mode, click "Load unpacked", select `dist/`
+2. **Configure Firebase**: Edit `extension/background/service-worker.ts` with your Firebase config
+3. **Deploy functions**: `cd firebase && npm install && firebase deploy --only functions`
+4. **Build**: `npm run build`
+5. **Load in Chrome**: Go to `chrome://extensions`, enable Developer mode, click "Load unpacked", select `dist/`
 
 ## Development Commands
 
@@ -88,11 +88,17 @@ npm run lint                 # Run ESLint
 npm run type-check           # Run TypeScript type checking
 npm run test                 # Run tests
 
-# Supabase local development
-supabase start               # Start local Supabase instance
-supabase db reset            # Reset database with migrations
-supabase functions serve     # Run edge functions locally
-supabase gen types typescript --local > shared/types/database.ts
+# Firebase local development
+cd firebase
+firebase emulators:start     # Start local Firebase emulators
+firebase deploy --only functions  # Deploy Cloud Functions
+firebase deploy --only firestore:rules  # Deploy Firestore rules
+
+# Cloud Functions development
+cd firebase/functions
+npm install                  # Install function dependencies
+npm run build                # Build TypeScript functions
+npm run serve                # Run functions locally with emulator
 
 # Load extension in Chrome
 # 1. Navigate to chrome://extensions
@@ -112,8 +118,8 @@ supabase gen types typescript --local > shared/types/database.ts
 | `extension/store/index.ts` | Zustand state (user, credits) |
 | `extension/popup/App.tsx` | Main UI component |
 | `shared/types/index.ts` | All TypeScript interfaces |
-| `supabase/functions/generate-text/index.ts` | OpenAI integration |
-| `supabase/migrations/*.sql` | Database schema with RLS |
+| `firebase/functions/src/index.ts` | All Cloud Functions (OpenAI, credits, drafts) |
+| `firebase/firestore.rules` | Firestore security rules |
 
 ## Architecture Principles
 
@@ -125,7 +131,7 @@ supabase gen types typescript --local > shared/types/database.ts
 4. **Output sanitization** - Escape all content before DOM injection
 5. **Server-side credit checks** - Never trust client-side credit validation
 6. **CORS restrictions** - Backend only accepts requests from the extension ID
-7. **Row Level Security (RLS)** - All Supabase tables must have RLS enabled
+7. **Firestore Security Rules** - All collections must have proper security rules
 
 ### Extension Architecture
 
@@ -143,41 +149,43 @@ supabase gen types typescript --local > shared/types/database.ts
 - **Naming** - camelCase for variables/functions, PascalCase for components/types
 - **File naming** - kebab-case for files (e.g., `content-detector.ts`)
 
-## Database Schema
+## Database Schema (Firestore)
 
-### Tables
+### Collections
 
-```sql
--- Credits tracking (per user)
-credits (
-  user_id UUID PRIMARY KEY,
-  text_credits INT DEFAULT 10,
-  image_credits INT DEFAULT 0,
-  video_credits INT DEFAULT 0,
-  plan TEXT DEFAULT 'free',  -- 'free', 'pro', 'business'
-  stripe_customer_id TEXT,
-  updated_at TIMESTAMP
-)
+```typescript
+// credits/{userId} - Credits tracking (per user)
+{
+  textCredits: number,      // Default: 10
+  imageCredits: number,     // Default: 0
+  videoCredits: number,     // Default: 0
+  plan: string,             // 'free', 'pro', 'business'
+  stripeCustomerId?: string,
+  stripeSubscriptionId?: string,
+  updatedAt: Timestamp
+}
 
--- Generation history
-generations (
-  id UUID PRIMARY KEY,
-  user_id UUID,
-  type TEXT,           -- 'text', 'image', 'video'
-  platform TEXT,       -- 'linkedin', 'twitter', 'facebook', etc.
-  context_type TEXT,   -- 'product', 'article', 'video', etc.
-  created_at TIMESTAMP
-)
+// generations/{generationId} - Generation history
+{
+  userId: string,
+  type: string,             // 'text', 'image', 'video'
+  platform: string,         // 'linkedin', 'twitter', 'facebook', etc.
+  contextType: string,      // 'product', 'article', 'video', etc.
+  tone: string,
+  inputTokens?: number,
+  outputTokens?: number,
+  model: string,
+  createdAt: Timestamp
+}
 
--- Saved drafts
-drafts (
-  id UUID PRIMARY KEY,
-  user_id UUID,
-  content TEXT,
-  platform TEXT,
-  image_url TEXT,
-  created_at TIMESTAMP
-)
+// drafts/{draftId} - Saved drafts
+{
+  userId: string,
+  content: string,
+  platform?: string,
+  imageUrl?: string,
+  createdAt: Timestamp
+}
 ```
 
 ## API Endpoints
@@ -232,7 +240,7 @@ drafts (
 - Context detection for product pages and articles
 - Text generation for LinkedIn and X/Twitter
 - DOM injection for compose boxes
-- Supabase auth and credit tracking
+- Firebase auth and credit tracking
 - Basic popup UI
 - Free tier (10 generations/month)
 
@@ -298,17 +306,24 @@ Platform DOM structures change frequently. When injection breaks:
 
 ## Environment Variables
 
-### Extension (stored in chrome.storage.local)
-- `AUTH_TOKEN` - Current JWT token
-- `REFRESH_TOKEN` - Token for refreshing auth
-- `USER_SETTINGS` - User preferences
-
-### Backend (Supabase secrets)
+### Extension (in service-worker.ts)
+```typescript
+const firebaseConfig = {
+  apiKey: 'YOUR_API_KEY',
+  authDomain: 'YOUR_PROJECT.firebaseapp.com',
+  projectId: 'YOUR_PROJECT_ID',
+  storageBucket: 'YOUR_PROJECT.appspot.com',
+  messagingSenderId: 'YOUR_SENDER_ID',
+  appId: 'YOUR_APP_ID',
+};
+const FUNCTIONS_URL = 'https://us-central1-YOUR_PROJECT_ID.cloudfunctions.net';
 ```
-OPENAI_API_KEY=sk-...
-FAL_API_KEY=...
-STRIPE_SECRET_KEY=sk_...
-STRIPE_WEBHOOK_SECRET=whsec_...
+
+### Backend (Firebase Functions - set via firebase functions:config:set)
+```bash
+firebase functions:config:set openai.key="sk-..."
+firebase functions:config:set stripe.secret_key="sk_..."
+firebase functions:config:set stripe.webhook_secret="whsec_..."
 ```
 
 ## Chrome Web Store Compliance
@@ -331,7 +346,9 @@ STRIPE_WEBHOOK_SECRET=whsec_...
 ## Useful Resources
 
 - [Chrome Extension Docs](https://developer.chrome.com/docs/extensions/mv3/)
-- [Supabase Docs](https://supabase.com/docs)
+- [Firebase Docs](https://firebase.google.com/docs)
+- [Cloud Functions](https://firebase.google.com/docs/functions)
+- [Firestore Security Rules](https://firebase.google.com/docs/firestore/security/get-started)
 - [OpenAI API Docs](https://platform.openai.com/docs)
 - [FAL AI Docs](https://fal.ai/docs)
 - [Tailwind CSS Docs](https://tailwindcss.com/docs)
