@@ -9,18 +9,19 @@ import {
 } from 'firebase/auth';
 import type { ExtensionMessage, GenerationRequest, UserCredits, User } from '@shared/types';
 
-// Firebase configuration - Replace with your config
+// Firebase configuration
 const firebaseConfig = {
-  apiKey: 'YOUR_API_KEY',
-  authDomain: 'YOUR_PROJECT.firebaseapp.com',
-  projectId: 'YOUR_PROJECT_ID',
-  storageBucket: 'YOUR_PROJECT.appspot.com',
-  messagingSenderId: 'YOUR_SENDER_ID',
-  appId: 'YOUR_APP_ID',
+  apiKey: "AIzaSyA9f5cwUWBROAaa-Zy3YHULBrHgs-bhpgQ",
+  authDomain: "socialpost-22012026.firebaseapp.com",
+  projectId: "socialpost-22012026",
+  storageBucket: "socialpost-22012026.firebasestorage.app",
+  messagingSenderId: "477540556183",
+  appId: "1:477540556183:web:54bc766129a901435b78d2",
+  measurementId: "G-1NSZTEE16F"
 };
 
-// Cloud Functions base URL - Replace with your deployed URL
-const FUNCTIONS_URL = 'https://us-central1-YOUR_PROJECT_ID.cloudfunctions.net';
+// Cloud Functions base URL
+const FUNCTIONS_URL = 'https://us-central1-socialpost-22012026.cloudfunctions.net';
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
