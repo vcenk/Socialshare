@@ -23,37 +23,66 @@ SocialForge is a Chrome extension that automatically detects webpage context (pr
 
 ```
 /extension
-  /popup              → Main UI when clicking extension icon
-  /sidepanel          → Expanded workspace for content generation
+  /background
+    service-worker.ts   → Service worker handling all API calls via Supabase
+  /components
+    Header.tsx          → App header with user info and logout
+    CreditsDisplay.tsx  → Shows remaining credits by type
+    ContextCard.tsx     → Displays detected page context
+    PlatformSelector.tsx→ LinkedIn/Twitter platform toggle
+    ToneSelector.tsx    → Tone selection chips (professional, casual, etc.)
+    GenerateButton.tsx  → Main CTA for content generation
+    ContentPreview.tsx  → Shows generated content with copy/insert actions
+    LoginPrompt.tsx     → Authentication form
+  /config
+    platforms.ts        → Platform configurations (selectors, limits)
   /content-scripts
-    detector.ts       → Scrapes page context from visited pages
-    injector.ts       → Fills social media compose boxes
-  /background         → Service worker, API calls to backend
-  /components         → Shared React components
-  /hooks              → Custom React hooks
-  /utils              → Utility functions
-  /types              → TypeScript type definitions
-  manifest.json       → Chrome extension manifest (V3)
+    detector.ts         → Scrapes page context (product, article, video, general)
+    injector.ts         → Injects content into social media compose boxes
+  /icons
+    .gitkeep            → Placeholder (add icon-16/32/48/128.png)
+  /popup
+    index.html          → Popup entry point
+    main.tsx            → React mount point
+    App.tsx             → Main popup application component
+  /sidepanel
+    index.html          → Side panel entry point
+    main.tsx            → Reuses popup App component
+  /store
+    index.ts            → Zustand store for auth and credits state
+  /styles
+    globals.css         → Tailwind CSS with custom components
+  manifest.json         → Chrome extension manifest (V3)
 
 /supabase
-  /functions          → Edge functions (Deno)
-    /auth             → Authentication endpoints
-    /generate         → AI generation endpoints
-    /credits          → Credit management
-    /drafts           → Draft management
-    /stripe           → Stripe webhook handlers
-  /migrations         → Database migrations
-  seed.sql            → Initial database seed data
+  /functions
+    /credits-check      → GET user credits
+    /generate-text      → POST generate content with OpenAI
+    /drafts-save        → POST save draft
+    /drafts-list        → GET list user drafts
+    /stripe-webhook     → POST handle Stripe events
+  /migrations
+    20240101000000_initial_schema.sql → Database schema with RLS
+  config.toml           → Supabase local development config
 
-/shared               → Shared types between extension and backend
+/shared
+  /types
+    index.ts            → TypeScript types (PageContext, Platform, etc.)
 ```
+
+## Quick Setup
+
+1. **Install dependencies**: `npm install`
+2. **Configure Supabase**: Edit `extension/background/service-worker.ts` with your Supabase URL and anon key
+3. **Build**: `npm run build`
+4. **Load in Chrome**: Go to `chrome://extensions`, enable Developer mode, click "Load unpacked", select `dist/`
 
 ## Development Commands
 
 ```bash
 # Extension development
 npm install                  # Install dependencies
-npm run dev                  # Start development with hot reload
+npm run dev                  # Start development with watch mode
 npm run build                # Build for production
 npm run lint                 # Run ESLint
 npm run type-check           # Run TypeScript type checking
@@ -68,8 +97,23 @@ supabase gen types typescript --local > shared/types/database.ts
 # Load extension in Chrome
 # 1. Navigate to chrome://extensions
 # 2. Enable "Developer mode"
-# 3. Click "Load unpacked" and select /extension/dist
+# 3. Click "Load unpacked" and select /dist folder
 ```
+
+## Key Files Reference
+
+| File | Purpose |
+|------|---------|
+| `extension/manifest.json` | Extension permissions and entry points |
+| `extension/background/service-worker.ts` | All backend communication (auth, generation) |
+| `extension/content-scripts/detector.ts` | Page context extraction logic |
+| `extension/content-scripts/injector.ts` | DOM injection for each platform |
+| `extension/config/platforms.ts` | Platform configs (selectors, char limits) |
+| `extension/store/index.ts` | Zustand state (user, credits) |
+| `extension/popup/App.tsx` | Main UI component |
+| `shared/types/index.ts` | All TypeScript interfaces |
+| `supabase/functions/generate-text/index.ts` | OpenAI integration |
+| `supabase/migrations/*.sql` | Database schema with RLS |
 
 ## Architecture Principles
 
